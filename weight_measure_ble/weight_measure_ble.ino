@@ -60,7 +60,7 @@
 */
 
 #define DOUT  5
-#define CLK  2
+#define CLK  4
 
 HX711 * scale;
 
@@ -85,10 +85,12 @@ const int LED = 2; // Could be different depending on the dev board. I used the 
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
+      Serial.println("*Device connected");
     };
 
     void onDisconnect(BLEServer* pServer) {
       deviceConnected = false;
+      Serial.println("*Device disconnected");
     }
 };
 
@@ -122,6 +124,12 @@ class MyCallbacks: public BLECharacteristicCallbacks {
     }
 };
 
+typedef union
+{
+ float number;
+ uint8_t bytes[4];
+} FLOATUNION_t;
+
 void setup() {
   Serial.begin(115200);
 
@@ -140,7 +148,7 @@ void setup() {
   Serial.print("Zero factor: "); //This can be used to remove the need to tare the scale. Useful in permanent scale projects.
   Serial.println(zero_factor);
 
-  pinMode(LED, OUTPUT);
+  //pinMode(LED, OUTPUT);
 
   // Create the BLE Device
   BLEDevice::init("ESP32 UART Test"); // Give it a name
@@ -194,19 +202,22 @@ void loop() {
       calibration_factor -= 10;
   }
     // Fabricate some arbitrary junk for now...
-    txValue = scale_units; // This could be an actual sensor reading!
+    //txValue = scale_units; // This could be an actual sensor reading!
 
     // Let's convert the value to a char array:
-    char txString[8]; // make sure this is big enuffz
-    dtostrf(txValue, 1, 2, txString); // float_val, min_width, digits_after_decimal, char_buffer
+    //char txString[4]; // make sure this is big enuffz
+    FLOATUNION_t txValue;
+    txValue.number = scale_units; // Assign a number to the float
+    
+    //dtostrf(txValue, 1, 2, txString); // float_val, min_width, digits_after_decimal, char_buffer
     
 //    pCharacteristic->setValue(&txValue, 1); // To send the integer value
 //    pCharacteristic->setValue("Hello!"); // Sending a test message
-    pCharacteristic->setValue(txString);
+    pCharacteristic->setValue(txValue.bytes, 4);
     
     pCharacteristic->notify(); // Send the value to the app!
     Serial.print("*** Sent Value: ");
-    Serial.print(txString);
+    Serial.print(txValue.number);
     Serial.println(" ***");
 
     // You can add the rxValue checks down here instead
