@@ -6,6 +6,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include "HX711.h"
+#include "EEPROM.h"
 
 #define DOUT  5
 #define CLK  4
@@ -15,6 +16,13 @@
 #define CHARACTERISTIC_UUID_SENSOR_VALUE     "a22b15dc-4007-11e8-b467-0ed5f89f718b"
 #define CHARACTERISTIC_UUID_ON_BED_VALUE     "a22b1730-4007-11e8-b467-0ed5f89f718b"
 #define CHARACTERISTIC_UUID_NOT_ON_BED_VALUE "a22b1852-4007-11e8-b467-0ed5f89f718b"
+
+#define EEPROM_SIZE 16
+#define ON_BED_EEPROM_ADDRESS 0
+#define ON_BED_EEPROM_INITILIZED_ADDRESS 4
+#define NOT_ON_BED_EEPROM_ADDRESS 8
+#define NOT_ON_BED_EEPROM_INITILIZED_ADDRESS 12
+
 
 HX711 * scale;
 float calibration_factor = -7050; //-7050 worked for my 440lb max scale setup
@@ -43,15 +51,30 @@ class MyServerCallbacks: public BLEServerCallbacks {
 };
 
 class MyCallbacks: public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic *pCharacteristic) {
-      std::string rxValue = pCharacteristic->getValue();
+    int eepRomAddr;
 
-      if (rxValue.length() > 0) {
+public:
+    MyCallbacks(int eepRomAddr) : eepRomAddr(eepRomAddr) {}
+  
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      FLOATUNION_t value;
+
+      std::string strValue = pCharacteristic->getValue();
+      uint8_t * bytes = (uint8_t*)strValue.data();
+      for(int i = 0; i < 4 && i < strValue.length(); ++i) {
+        value.bytes[i] = bytes[i];
+      }
+
+      EEPROM.writeFloat(eepRomAddr, value.number);
+      EEPROM.writeInt(eepRomAddr + 4, 1);
+      EEPROM.commit();
+
+      if (strValue.length() > 0) {
         Serial.println("*********");
         Serial.print("Received Value: ");
 
-        for (int i = 0; i < rxValue.length(); i++) {
-          Serial.print(rxValue[i]);
+        for (int i = 0; i < strValue.length(); i++) {
+          Serial.print(strValue[i]);
         }
         
         Serial.println("*********");
@@ -61,6 +84,15 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 
 void setup() {
   Serial.begin(115200);
+
+  if (!EEPROM.begin(EEPROM_SIZE))
+  {
+    Serial.println("failed to initialise EEPROM"); delay(1000);
+  }
+  Serial.print("On bed: "); Serial.println(EEPROM.readFloat(ON_BED_EEPROM_ADDRESS));
+  Serial.print("On bed intialized: "); Serial.println(EEPROM.readInt(ON_BED_EEPROM_INITILIZED_ADDRESS));
+  Serial.print("Not on bed: "); Serial.println(EEPROM.readFloat(NOT_ON_BED_EEPROM_ADDRESS));
+  Serial.print("Not on bed initialized: "); Serial.println(EEPROM.readInt(NOT_ON_BED_EEPROM_INITILIZED_ADDRESS));
 
   scale = new HX711(DOUT, CLK);
 
@@ -89,17 +121,31 @@ void setup() {
   onBedSensorValueCharacteristic = pService->createCharacteristic(
                       CHARACTERISTIC_UUID_ON_BED_VALUE,
                       BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE
-                    );     
+                    );
+  if(EEPROM.readInt(ON_BED_EEPROM_INITILIZED_ADDRESS) == 1) {
+    FLOATUNION_t value;
+    value.number = EEPROM.readFloat(ON_BED_EEPROM_ADDRESS);
+    onBedSensorValueCharacteristic->setValue(value.bytes, 4);
+    Serial.print("Initialized onBedCharacteristic with value "); Serial.println(value.number);
+  }
   onBedSensorValueCharacteristic->addDescriptor(new BLE2902());
-  onBedSensorValueCharacteristic->setCallbacks(new MyCallbacks());
+  MyCallbacks * onBedCallbacks = new MyCallbacks(ON_BED_EEPROM_ADDRESS);
+  onBedSensorValueCharacteristic->setCallbacks(onBedCallbacks);
 
 // NotOnBed sensor value characteristic
   notOnBedSensorValueCharacteristic = pService->createCharacteristic(
                       CHARACTERISTIC_UUID_NOT_ON_BED_VALUE,
                       BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE
                     );     
+  if(EEPROM.readInt(NOT_ON_BED_EEPROM_INITILIZED_ADDRESS) == 1) {
+    FLOATUNION_t value;
+    value.number = EEPROM.readFloat(NOT_ON_BED_EEPROM_ADDRESS);
+    notOnBedSensorValueCharacteristic->setValue(value.bytes, 4);
+    Serial.print("Initialized notOnBedCharacteristic with value "); Serial.println(value.number);
+  }
   notOnBedSensorValueCharacteristic->addDescriptor(new BLE2902());
-  notOnBedSensorValueCharacteristic->setCallbacks(new MyCallbacks());
+  MyCallbacks * notOnBedCallbacks = new MyCallbacks(NOT_ON_BED_EEPROM_ADDRESS);
+  notOnBedSensorValueCharacteristic->setCallbacks(notOnBedCallbacks);
 
   // Start the service
   pService->start();
@@ -111,15 +157,15 @@ void setup() {
 
 void loop() {
   if (deviceConnected) {
-  Serial.print("Reading: ");
-  float scale_units =scale->get_units();
-  Serial.print(scale_units, 1);
-  Serial.print(" lbs"); //Change this to kg and re-adjust the calibration factor if you follow SI units like a sane person
-  Serial.print(" calibration_factor: ");
-  Serial.print(calibration_factor);
-  Serial.println();
+    Serial.print("Reading: ");
+    float scale_units =scale->get_units();
+    Serial.print(scale_units, 1);
+    Serial.print(" lbs"); //Change this to kg and re-adjust the calibration factor if you follow SI units like a sane person
+    Serial.print(" calibration_factor: ");
+    Serial.print(calibration_factor);
+    Serial.println();
   
-    // Let's convert the value to a char array:
+    // Convert the value to a char array:
     FLOATUNION_t txValue;
     txValue.number = scale_units; // Assign a number to the float
     
@@ -129,19 +175,6 @@ void loop() {
     Serial.print("*** Sent Value: ");
     Serial.print(txValue.number);
     Serial.println(" ***");
-
-    // You can add the rxValue checks down here instead
-    // if you set "rxValue" as a global var at the top!
-    // Note you will have to delete "std::string" declaration
-    // of "rxValue" in the callback function.
-//    if (rxValue.find("A") != -1) { 
-//      Serial.println("Turning ON!");
-//      digitalWrite(LED, HIGH);
-//    }
-//    else if (rxValue.find("B") != -1) {
-//      Serial.println("Turning OFF!");
-//      digitalWrite(LED, LOW);
-//    }
-  }
-  delay(1000);
+   }
+   delay(1000);
 }
