@@ -43,11 +43,13 @@ typedef union
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
+      scale->power_up();
       Serial.println("*Device connected");
     };
 
     void onDisconnect(BLEServer* pServer) {
       deviceConnected = false;
+      scale->power_down();
       Serial.println("*Device disconnected");
     }
 };
@@ -101,9 +103,8 @@ void setup() {
   scale->set_offset(WEIGHT_OFFSET);
   scale->set_scale(CALIBRATION_FACTOR);
 
-  long zero_factor = scale->read_average(); //Get a baseline reading
-  Serial.print("Zero factor: "); //This can be used to remove the need to tare the scale. Useful in permanent scale projects.
-  Serial.println(zero_factor);
+  // Sleep until client connection
+  scale->power_down();
 
   BLEDevice::init("Sleep monitoring device"); // Give it a name
 
