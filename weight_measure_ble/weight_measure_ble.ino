@@ -11,6 +11,9 @@
 #define DOUT  5
 #define CLK  4
 
+#define CALIBRATION_FACTOR 4750.0
+#define WEIGHT_OFFSET 230850.0
+
 // https://www.uuidgenerator.net/ UUID generator is used
 #define SERVICE_UUID                         "a22b1352-4007-11e8-b467-0ed5f89f718b" // service UUID
 #define CHARACTERISTIC_UUID_SENSOR_VALUE     "a22b15dc-4007-11e8-b467-0ed5f89f718b"
@@ -25,7 +28,6 @@
 
 
 HX711 * scale;
-float calibration_factor = -7050; //-7050 worked for my 440lb max scale setup
 
 BLECharacteristic *sensorValueCharacteristic;
 BLECharacteristic *onBedSensorValueCharacteristic;
@@ -96,8 +98,8 @@ void setup() {
 
   scale = new HX711(DOUT, CLK);
 
-  scale->set_scale();
-  scale->tare(); //Reset the scale to 0
+  scale->set_offset(WEIGHT_OFFSET);
+  scale->set_scale(CALIBRATION_FACTOR);
 
   long zero_factor = scale->read_average(); //Get a baseline reading
   Serial.print("Zero factor: "); //This can be used to remove the need to tare the scale. Useful in permanent scale projects.
@@ -157,23 +159,21 @@ void setup() {
 
 void loop() {
   if (deviceConnected) {
-    Serial.print("Reading: ");
-    float scale_units =scale->get_units();
-    Serial.print(scale_units, 1);
-    Serial.print(" lbs"); //Change this to kg and re-adjust the calibration factor if you follow SI units like a sane person
-    Serial.print(" calibration_factor: ");
-    Serial.print(calibration_factor);
+    Serial.print("Weight: ");
+    float weight =scale->get_units();
+    Serial.print(weight, 1);
+    Serial.print(" kg"); 
     Serial.println();
   
     // Convert the value to a char array:
-    FLOATUNION_t txValue;
-    txValue.number = scale_units; // Assign a number to the float
+    FLOATUNION_t value;
+    value.number = weight; // Assign a number to the float
     
-    sensorValueCharacteristic->setValue(txValue.bytes, 4);  
+    sensorValueCharacteristic->setValue(value.bytes, 4);  
     sensorValueCharacteristic->notify(); // Send the value to the app!
     
     Serial.print("*** Sent Value: ");
-    Serial.print(txValue.number);
+    Serial.print(value.number);
     Serial.println(" ***");
    }
    delay(1000);
